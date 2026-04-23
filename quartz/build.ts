@@ -103,6 +103,20 @@ async function buildQuartz(argv: Argv, mut: Mutex, clientRefresh: () => void) {
   const buildPlan = deriveBuildPlan(previousState, sourceFingerprints)
   ctx.buildPlan = buildPlan
 
+  if (!argv.fullRebuild && previousState) {
+    const staleSources = [...buildPlan.deleted, ...buildPlan.changed]
+    const staleOutputs = new Set<FilePath>()
+    for (const sourcePath of staleSources) {
+      for (const outputPath of previousState.outputsBySource[sourcePath] ?? []) {
+        staleOutputs.add(outputPath)
+      }
+    }
+
+    for (const outputPath of staleOutputs) {
+      await rm(outputPath, { force: true })
+    }
+  }
+
   console.log(
     `Found ${markdownPaths.length} input files from \`${argv.directory}\` in ${perf.timeSince("glob")}`,
   )
@@ -151,6 +165,32 @@ async function buildQuartz(argv: Argv, mut: Mutex, clientRefresh: () => void) {
       path,
     })),
   ]
+
+  const deletedMarkdown = buildPlan.deleted.filter((path) => path.endsWith(".md"))
+  if (ctx.incremental && deletedMarkdown.length > 0) {
+    console.log(
+      styleText(
+        "yellow",
+        `Detected ${deletedMarkdown.length} deleted markdown files. Conservatively marking all current markdown pages for rebuild to avoid stale link/backlink state.`,
+      ),
+    )
+
+    const existingChanged = new Set(
+      changeEvents
+        .filter((event) => event.type !== "delete")
+        .map((event) => event.path)
+        .filter((path) => path.endsWith(".md")),
+    )
+
+    for (const [relativePath, processedContent] of filesByRelativePath.entries()) {
+      if (existingChanged.has(relativePath)) continue
+      changeEvents.push({
+        type: "change",
+        path: relativePath,
+        file: processedContent[1],
+      })
+    }
+  }
 
   await emitContent(ctx, filteredContent, changeEvents)
   const configHash = hashObject(cfg.configuration)
