@@ -52,10 +52,17 @@ export const CreatedModifiedDate: QuartzTransformerPlugin<Partial<Options>> = (u
               repo = Repository.discover(ctx.argv.directory)
               repositoryWorkdir = repo.workdir() ?? ctx.argv.directory
             } catch (e) {
+              const reason = e instanceof Error ? `${e.name}: ${e.message}` : String(e)
+              const ownershipError =
+                reason.includes("not owned by current user") || reason.includes("safe.directory")
+              const hint = ownershipError
+                ? "\nHint: this looks like Git safe.directory ownership protection. Try running the container with `--user $(id -u):$(id -g)` or add `git config --global --add safe.directory <repo-path>` inside the container."
+                : ""
+
               console.log(
                 styleText(
                   "yellow",
-                  `\nWarning: couldn't find git repository for ${ctx.argv.directory}`,
+                  `\nWarning: couldn't find git repository for ${ctx.argv.directory} (${reason})${hint}`,
                 ),
               )
             }
