@@ -19,6 +19,8 @@ export interface D3Config {
   showTags: boolean
   focusOnHover?: boolean
   enableRadial?: boolean
+  maxNodes?: number
+  collapseThreshold?: number
 }
 
 interface GraphOptions {
@@ -41,6 +43,8 @@ const defaultOptions: GraphOptions = {
     removeTags: [],
     focusOnHover: false,
     enableRadial: false,
+    maxNodes: 100,
+    collapseThreshold: 250,
   },
   globalGraph: {
     drag: true,
@@ -56,6 +60,8 @@ const defaultOptions: GraphOptions = {
     removeTags: [],
     focusOnHover: true,
     enableRadial: true,
+    maxNodes: 1000,
+    collapseThreshold: 2000,
   },
 }
 

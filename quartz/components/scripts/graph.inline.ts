@@ -87,6 +87,8 @@ async function renderGraph(graph: HTMLElement, fullSlug: FullSlug) {
     showTags,
     focusOnHover,
     enableRadial,
+    maxNodes,
+    collapseThreshold,
   } = JSON.parse(graph.dataset["cfg"]!) as D3Config
 
   const data: Map<SimpleSlug, ContentDetails> = new Map(
@@ -100,6 +102,36 @@ async function renderGraph(graph: HTMLElement, fullSlug: FullSlug) {
   const validLinks = new Set(data.keys())
 
   const tweens = new Map<string, TweenNode>()
+
+  // precompute style prop strings up front so collapseThreshold branch can pass them through
+  const cssVars = [
+    "--secondary",
+    "--tertiary",
+    "--gray",
+    "--light",
+    "--lightgray",
+    "--dark",
+    "--darkgray",
+    "--bodyFont",
+  ] as const
+  const computedStyleMap = cssVars.reduce(
+    (acc, key) => {
+      acc[key] = getComputedStyle(document.documentElement).getPropertyValue(key)
+      return acc
+    },
+    {} as Record<(typeof cssVars)[number], string>,
+  )
+  const color = (d: NodeData) => {
+    const isCurrent = d.id === slug
+    if (isCurrent) {
+      return computedStyleMap["--secondary"]
+    } else if (visited.has(d.id) || d.id.startsWith("tags/")) {
+      return computedStyleMap["--tertiary"]
+    } else {
+      return computedStyleMap["--gray"]
+    }
+  }
+
   for (const [source, details] of data.entries()) {
     const outgoing = details.links ?? []
 
@@ -124,6 +156,8 @@ async function renderGraph(graph: HTMLElement, fullSlug: FullSlug) {
 
   const neighbourhood = new Set<SimpleSlug>()
   const wl: (SimpleSlug | "__SENTINEL")[] = [slug, "__SENTINEL"]
+  // also track BFS order (distance from current page) for maxNodes trimming
+  const bfsOrder: SimpleSlug[] = []
   if (depth >= 0) {
     while (depth >= 0 && wl.length > 0) {
       // compute neighbours
@@ -133,15 +167,148 @@ async function renderGraph(graph: HTMLElement, fullSlug: FullSlug) {
         wl.push("__SENTINEL")
       } else {
         neighbourhood.add(cur)
+        bfsOrder.push(cur)
         const outgoing = links.filter((l) => l.source === cur)
         const incoming = links.filter((l) => l.target === cur)
         wl.push(...outgoing.map((l) => l.target), ...incoming.map((l) => l.source))
       }
     }
   } else {
-    validLinks.forEach((id) => neighbourhood.add(id))
-    if (showTags) tags.forEach((tag) => neighbourhood.add(tag))
+    validLinks.forEach((id) => {
+      neighbourhood.add(id)
+      bfsOrder.push(id)
+    })
+    if (showTags)
+      tags.forEach((tag) => {
+        neighbourhood.add(tag)
+        bfsOrder.push(tag)
+      })
   }
+
+  // ── collapseThreshold ────────────────────────────────────────────────────
+  // If neighbourhood is too big to render comfortably, replace the graph
+  // container with a click-to-load placeholder instead of hanging the browser.
+  const effectiveCollapse = collapseThreshold ?? Infinity
+  if (neighbourhood.size > effectiveCollapse) {
+    removeAllChildren(graph)
+    const placeholder = document.createElement("div")
+    placeholder.className = "graph-collapsed-placeholder"
+    placeholder.innerHTML = `
+      <span class="graph-collapsed-icon">⎆</span>
+      <span>Graph hidden — ${neighbourhood.size} nodes</span>
+      <button class="graph-collapsed-btn">Show graph</button>
+    `
+    graph.appendChild(placeholder)
+    placeholder.querySelector(".graph-collapsed-btn")!.addEventListener("click", () => {
+      placeholder.remove()
+      void renderGraphContent(graph, fullSlug, neighbourhood, bfsOrder, links, tags, validLinks, {
+        enableDrag,
+        enableZoom,
+        scale,
+        repelForce,
+        centerForce,
+        linkDistance,
+        fontSize,
+        opacityScale,
+        showTags,
+        focusOnHover: focusOnHover ?? false,
+        enableRadial: enableRadial ?? false,
+        maxNodes,
+        color,
+        computedStyleMap,
+        tweens,
+        data,
+      })
+    })
+    return () => {
+      removeAllChildren(graph)
+    }
+  }
+
+  // ── maxNodes ─────────────────────────────────────────────────────────────
+  // Trim the neighbourhood to the closest maxNodes nodes (by BFS order).
+  let truncated = false
+  let truncatedFrom = neighbourhood.size
+  if (maxNodes !== undefined && neighbourhood.size > maxNodes) {
+    truncated = true
+    const trimmed = new Set(bfsOrder.slice(0, maxNodes))
+    for (const id of neighbourhood) {
+      if (!trimmed.has(id)) neighbourhood.delete(id)
+    }
+  }
+
+  return renderGraphContent(graph, fullSlug, neighbourhood, bfsOrder, links, tags, validLinks, {
+    enableDrag,
+    enableZoom,
+    scale,
+    repelForce,
+    centerForce,
+    linkDistance,
+    fontSize,
+    opacityScale,
+    showTags,
+    focusOnHover: focusOnHover ?? false,
+    enableRadial: enableRadial ?? false,
+    maxNodes,
+    color,
+    computedStyleMap,
+    tweens,
+    data,
+    truncated,
+    truncatedFrom,
+  })
+}
+
+type RenderGraphContentOptions = {
+  enableDrag: boolean
+  enableZoom: boolean
+  scale: number
+  repelForce: number
+  centerForce: number
+  linkDistance: number
+  fontSize: number
+  opacityScale: number
+  showTags: boolean
+  focusOnHover: boolean
+  enableRadial: boolean
+  maxNodes?: number
+  color: (d: NodeData) => string
+  computedStyleMap: Record<string, string>
+  tweens: Map<string, TweenNode>
+  data: Map<SimpleSlug, ContentDetails>
+  truncated?: boolean
+  truncatedFrom?: number
+}
+
+async function renderGraphContent(
+  graph: HTMLElement,
+  fullSlug: FullSlug,
+  neighbourhood: Set<SimpleSlug>,
+  _bfsOrder: SimpleSlug[],
+  links: SimpleLinkData[],
+  _tags: SimpleSlug[],
+  _validLinks: Set<SimpleSlug>,
+  opts: RenderGraphContentOptions,
+) {
+  const {
+    enableDrag,
+    enableZoom,
+    scale,
+    repelForce,
+    centerForce,
+    linkDistance,
+    fontSize,
+    opacityScale,
+    showTags: _showTags,
+    focusOnHover,
+    enableRadial,
+    color,
+    computedStyleMap,
+    tweens,
+    data,
+    truncated,
+    truncatedFrom,
+  } = opts
 
   const nodes = [...neighbourhood].map((url) => {
     const text = url.startsWith("tags/") ? "#" + url.substring(5) : (data.get(url)?.title ?? url)
@@ -173,37 +340,6 @@ async function renderGraph(graph: HTMLElement, fullSlug: FullSlug) {
 
   const radius = (Math.min(width, height) / 2) * 0.8
   if (enableRadial) simulation.force("radial", forceRadial(radius).strength(0.2))
-
-  // precompute style prop strings as pixi doesn't support css variables
-  const cssVars = [
-    "--secondary",
-    "--tertiary",
-    "--gray",
-    "--light",
-    "--lightgray",
-    "--dark",
-    "--darkgray",
-    "--bodyFont",
-  ] as const
-  const computedStyleMap = cssVars.reduce(
-    (acc, key) => {
-      acc[key] = getComputedStyle(document.documentElement).getPropertyValue(key)
-      return acc
-    },
-    {} as Record<(typeof cssVars)[number], string>,
-  )
-
-  // calculate color
-  const color = (d: NodeData) => {
-    const isCurrent = d.id === slug
-    if (isCurrent) {
-      return computedStyleMap["--secondary"]
-    } else if (visited.has(d.id) || d.id.startsWith("tags/")) {
-      return computedStyleMap["--tertiary"]
-    } else {
-      return computedStyleMap["--gray"]
-    }
-  }
 
   function nodeRadius(d: NodeData) {
     const numLinks = graphData.links.filter(
@@ -550,6 +686,15 @@ async function renderGraph(graph: HTMLElement, fullSlug: FullSlug) {
   }
 
   requestAnimationFrame(animate)
+
+  // truncation notice
+  if (truncated && truncatedFrom !== undefined) {
+    const notice = document.createElement("div")
+    notice.className = "graph-truncated-notice"
+    notice.textContent = `Showing ${neighbourhood.size} of ${truncatedFrom} nodes`
+    graph.appendChild(notice)
+  }
+
   return () => {
     stopAnimation = true
     app.destroy()
@@ -581,7 +726,23 @@ document.addEventListener("nav", async (e: CustomEventMap["nav"]) => {
     cleanupLocalGraphs()
     const localGraphContainers = document.getElementsByClassName("graph-container")
     for (const container of localGraphContainers) {
-      localGraphCleanups.push(await renderGraph(container as HTMLElement, slug))
+      const el = container as HTMLElement
+
+      // Lazy init: only run simulation when the graph is actually visible
+      const observer = new IntersectionObserver(
+        async (entries, obs) => {
+          for (const entry of entries) {
+            if (!entry.isIntersecting) continue
+            obs.disconnect()
+            const cleanup = await renderGraph(el, slug)
+            localGraphCleanups.push(cleanup)
+          }
+        },
+        { threshold: 0.1 },
+      )
+      observer.observe(el)
+      // Store a cleanup that also disconnects the observer if graph never became visible
+      localGraphCleanups.push(() => observer.disconnect())
     }
   }
 
