@@ -2,7 +2,7 @@ import sourceMapSupport from "source-map-support"
 sourceMapSupport.install(options)
 import path from "path"
 import { PerfTimer } from "./util/perf"
-import { rm } from "fs/promises"
+import { rm, stat } from "fs/promises"
 import { GlobbyFilterFunction, isGitIgnored } from "globby"
 import { styleText } from "util"
 import { parseMarkdown } from "./processors/parse"
@@ -21,6 +21,14 @@ import { getStaticResourcesFromPlugins } from "./plugins"
 import { randomIdNonSecure } from "./util/random"
 import { ChangeEvent } from "./plugins/types"
 import { minimatch } from "minimatch"
+import {
+  BUILD_STATE_VERSION,
+  deriveBuildPlan,
+  hashObject,
+  loadBuildState,
+  saveBuildState,
+  SourceFingerprint,
+} from "./util/buildState"
 
 type ContentMap = Map<
   FilePath,
@@ -49,7 +57,7 @@ async function buildQuartz(argv: Argv, mut: Mutex, clientRefresh: () => void) {
     cfg,
     allSlugs: [],
     allFiles: [],
-    incremental: false,
+    incremental: !argv.fullRebuild,
   }
 
   const perf = new PerfTimer()
@@ -66,16 +74,44 @@ async function buildQuartz(argv: Argv, mut: Mutex, clientRefresh: () => void) {
   }
 
   const release = await mut.acquire()
-  perf.addEvent("clean")
-  await rm(output, { recursive: true, force: true })
-  console.log(`Cleaned output directory \`${output}\` in ${perf.timeSince("clean")}`)
+  const previousState = argv.fullRebuild ? null : await loadBuildState(output)
+
+  if (argv.fullRebuild) {
+    perf.addEvent("clean")
+    await rm(output, { recursive: true, force: true })
+    console.log(`Cleaned output directory \`${output}\` in ${perf.timeSince("clean")}`)
+  }
 
   perf.addEvent("glob")
   const allFiles = await glob("**/*.*", argv.directory, cfg.configuration.ignorePatterns)
   const markdownPaths = allFiles.filter((fp) => fp.endsWith(".md")).sort()
+  const fingerprintsEntries = await Promise.all(
+    allFiles.map(async (fp) => {
+      const fullPath = joinSegments(argv.directory, fp) as FilePath
+      const fpStat = await stat(fullPath)
+      return [
+        fp as FilePath,
+        { mtimeMs: fpStat.mtimeMs, size: fpStat.size } satisfies SourceFingerprint,
+      ]
+    }),
+  )
+  const sourceFingerprints = Object.fromEntries(fingerprintsEntries) as Record<
+    FilePath,
+    SourceFingerprint
+  >
+
+  const buildPlan = deriveBuildPlan(previousState, sourceFingerprints)
+  ctx.buildPlan = buildPlan
+
   console.log(
     `Found ${markdownPaths.length} input files from \`${argv.directory}\` in ${perf.timeSince("glob")}`,
   )
+
+  if (!argv.fullRebuild) {
+    console.log(
+      `Incremental plan: +${buildPlan.added.length} ~${buildPlan.changed.length} -${buildPlan.deleted.length} =${buildPlan.unchanged.length}`,
+    )
+  }
 
   const filePaths = markdownPaths.map((fp) => joinSegments(argv.directory, fp) as FilePath)
   ctx.allFiles = allFiles
@@ -85,6 +121,24 @@ async function buildQuartz(argv: Argv, mut: Mutex, clientRefresh: () => void) {
   const filteredContent = filterContent(ctx, parsedFiles)
 
   await emitContent(ctx, filteredContent)
+  const configHash = hashObject(cfg.configuration)
+  const pluginHash = hashObject({
+    transformers: cfg.plugins.transformers.map((plugin) => plugin.name),
+    filters: cfg.plugins.filters.map((plugin) => plugin.name),
+    emitters: cfg.plugins.emitters.map((plugin) => plugin.name),
+  })
+
+  await saveBuildState(output, {
+    version: BUILD_STATE_VERSION,
+    generatedAt: new Date().toISOString(),
+    metadata: {
+      configHash,
+      pluginHash,
+    },
+    sources: sourceFingerprints,
+    outputsBySource: previousState?.outputsBySource ?? {},
+  })
+
   console.log(
     styleText("green", `Done processing ${markdownPaths.length} files in ${perf.timeSince()}`),
   )
