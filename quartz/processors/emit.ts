@@ -28,6 +28,10 @@ export async function emitContent(
 
   let emittedFiles = 0
   const staticResources = getStaticResourcesFromPlugins(ctx)
+  const totalEmitters = cfg.plugins.emitters.length
+  let completedEmitters = 0
+  log.updateProgress(completedEmitters, totalEmitters)
+
   await Promise.all(
     cfg.plugins.emitters.map(async (emitter) => {
       try {
@@ -65,6 +69,9 @@ export async function emitContent(
         }
       } catch (err) {
         trace(`Failed to emit from plugin \`${emitter.name}\``, err as Error)
+      } finally {
+        completedEmitters++
+        log.updateProgress(completedEmitters, totalEmitters)
       }
     }),
   )
