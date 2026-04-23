@@ -170,5 +170,8 @@ export const ContentIndex: QuartzEmitterPlugin<Partial<Options>> = (opts) => {
         }
       }
     },
+    estimateEmittedFiles() {
+      return (opts?.enableSiteMap ? 1 : 0) + (opts?.enableRSS ? 1 : 0) + 1
+    },
   }
 }
