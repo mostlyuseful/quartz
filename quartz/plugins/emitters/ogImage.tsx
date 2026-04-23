@@ -1,7 +1,14 @@
 import { QuartzEmitterPlugin } from "../types"
 import { i18n } from "../../i18n"
 import { unescapeHTML } from "../../util/escape"
-import { FullSlug, getFileExtension, isAbsoluteURL, joinSegments, QUARTZ } from "../../util/path"
+import {
+  FilePath,
+  FullSlug,
+  getFileExtension,
+  isAbsoluteURL,
+  joinSegments,
+  QUARTZ,
+} from "../../util/path"
 import { ImageOptions, SocialImageOptions, defaultImage, getSatoriFonts } from "../../util/og"
 import sharp from "sharp"
 import satori, { SatoriOptions } from "satori"
@@ -12,6 +19,7 @@ import { BuildCtx } from "../../util/ctx"
 import { QuartzPluginData } from "../vfile"
 import fs from "node:fs/promises"
 import { styleText } from "util"
+import { hashObject } from "../../util/buildState"
 
 const defaultOptions: SocialImageOptions = {
   colorScheme: "lightMode",
@@ -65,6 +73,23 @@ async function generateSocialImage(
   return sharp(Buffer.from(svg)).webp({ quality: 40 })
 }
 
+function getOgFingerprint(
+  fileData: QuartzPluginData,
+  fullOptions: SocialImageOptions,
+  cfg: BuildCtx["cfg"]["configuration"],
+): string {
+  return hashObject({
+    slug: fileData.slug,
+    title: fileData.frontmatter?.title,
+    socialDescription: fileData.frontmatter?.socialDescription,
+    description: fileData.frontmatter?.description,
+    pageTitleSuffix: cfg.pageTitleSuffix,
+    theme: cfg.theme,
+    fullOptions,
+    imageTemplateVersion: "v1",
+  })
+}
+
 async function processOgImage(
   ctx: BuildCtx,
   fileData: QuartzPluginData,
@@ -81,6 +106,24 @@ async function processOgImage(
     fileData.frontmatter?.description ??
     unescapeHTML(fileData.description?.trim() ?? i18n(cfg.locale).propertyDefaults.description)
 
+  const sourcePath = fileData.relativePath as FilePath | undefined
+  const outputPath = joinSegments(ctx.argv.output, `${slug}-og-image.webp`) as FilePath
+  const fingerprint = getOgFingerprint(fileData, fullOptions, cfg)
+
+  if (sourcePath && ctx.ogFingerprints?.[sourcePath] === fingerprint) {
+    try {
+      await fs.access(outputPath)
+      const knownOutputs = ctx.outputsBySource?.[sourcePath] ?? []
+      if (!knownOutputs.includes(outputPath)) {
+        ctx.outputsBySource ??= {}
+        ctx.outputsBySource[sourcePath] = [...knownOutputs, outputPath]
+      }
+      return outputPath
+    } catch {
+      // output missing, fall through to regenerate
+    }
+  }
+
   const stream = await generateSocialImage(
     {
       title,
@@ -92,12 +135,20 @@ async function processOgImage(
     fullOptions,
   )
 
-  return write({
+  const writtenPath = await write({
     ctx,
     content: stream,
     slug: `${slug}-og-image` as FullSlug,
     ext: ".webp",
+    source: sourcePath,
   })
+
+  if (sourcePath) {
+    ctx.ogFingerprints ??= {}
+    ctx.ogFingerprints[sourcePath] = fingerprint
+  }
+
+  return writtenPath
 }
 
 export const CustomOgImagesEmitterName = "CustomOgImages"

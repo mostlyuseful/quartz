@@ -58,6 +58,7 @@ async function buildQuartz(argv: Argv, mut: Mutex, clientRefresh: () => void) {
     allSlugs: [],
     allFiles: [],
     incremental: !argv.fullRebuild,
+    previousBuildState: null,
   }
 
   const perf = new PerfTimer()
@@ -75,6 +76,7 @@ async function buildQuartz(argv: Argv, mut: Mutex, clientRefresh: () => void) {
 
   const release = await mut.acquire()
   const previousState = argv.fullRebuild ? null : await loadBuildState(output)
+  ctx.previousBuildState = previousState
 
   if (argv.fullRebuild) {
     perf.addEvent("clean")
@@ -104,10 +106,20 @@ async function buildQuartz(argv: Argv, mut: Mutex, clientRefresh: () => void) {
   ctx.buildPlan = buildPlan
 
   if (!argv.fullRebuild && previousState) {
-    const staleSources = [...buildPlan.deleted, ...buildPlan.changed]
     const staleOutputs = new Set<FilePath>()
-    for (const sourcePath of staleSources) {
+
+    for (const sourcePath of buildPlan.deleted) {
       for (const outputPath of previousState.outputsBySource[sourcePath] ?? []) {
+        staleOutputs.add(outputPath)
+      }
+    }
+
+    for (const sourcePath of buildPlan.changed) {
+      for (const outputPath of previousState.outputsBySource[sourcePath] ?? []) {
+        if (outputPath.endsWith("-og-image.webp")) {
+          continue
+        }
+
         staleOutputs.add(outputPath)
       }
     }
@@ -143,6 +155,7 @@ async function buildQuartz(argv: Argv, mut: Mutex, clientRefresh: () => void) {
   }
 
   ctx.outputsBySource = {}
+  ctx.ogFingerprints = { ...(previousState?.ogFingerprints ?? {}) }
   for (const changedPath of [...buildPlan.added, ...buildPlan.changed]) {
     if (changedPath.endsWith(".md")) {
       ctx.outputsBySource[changedPath] = []
@@ -203,10 +216,17 @@ async function buildQuartz(argv: Argv, mut: Mutex, clientRefresh: () => void) {
   const outputsBySource = { ...(previousState?.outputsBySource ?? {}) }
   for (const sourcePath of buildPlan.deleted) {
     delete outputsBySource[sourcePath]
+    delete ctx.ogFingerprints[sourcePath]
   }
 
   for (const [sourcePath, emittedOutputs] of Object.entries(ctx.outputsBySource)) {
     outputsBySource[sourcePath as FilePath] = emittedOutputs
+  }
+
+  for (const sourcePath of buildPlan.changed) {
+    if (!ctx.outputsBySource[sourcePath] && sourcePath.endsWith(".md")) {
+      delete ctx.ogFingerprints[sourcePath]
+    }
   }
 
   await saveBuildState(output, {
@@ -218,6 +238,7 @@ async function buildQuartz(argv: Argv, mut: Mutex, clientRefresh: () => void) {
     },
     sources: sourceFingerprints,
     outputsBySource,
+    ogFingerprints: ctx.ogFingerprints,
   })
 
   console.log(

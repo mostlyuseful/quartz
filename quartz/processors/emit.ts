@@ -7,7 +7,13 @@ import { BuildCtx } from "../util/ctx"
 import { styleText } from "util"
 import { ChangeEvent } from "../plugins/types"
 
-const incrementalEmitters = new Set(["ContentPage", "FolderPage", "TagPage", "AliasRedirects"])
+const incrementalEmitters = new Set([
+  "ContentPage",
+  "FolderPage",
+  "TagPage",
+  "AliasRedirects",
+  "CustomOgImages",
+])
 
 export async function emitContent(
   ctx: BuildCtx,

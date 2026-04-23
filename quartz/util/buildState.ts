@@ -29,6 +29,7 @@ export type BuildState = {
   metadata: BuildMetadata
   sources: Record<FilePath, SourceFingerprint>
   outputsBySource: Record<FilePath, FilePath[]>
+  ogFingerprints?: Record<FilePath, string>
 }
 
 function stableReplacer(_key: string, value: unknown) {

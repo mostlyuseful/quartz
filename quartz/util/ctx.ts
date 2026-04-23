@@ -2,7 +2,7 @@ import { QuartzConfig } from "../cfg"
 import { QuartzPluginData } from "../plugins/vfile"
 import { FileTrieNode } from "./fileTrie"
 import { FilePath, FullSlug } from "./path"
-import { BuildPlan } from "./buildState"
+import { BuildPlan, BuildState } from "./buildState"
 
 export interface Argv {
   directory: string
@@ -33,6 +33,8 @@ export interface BuildCtx {
   incremental: boolean
   buildPlan?: BuildPlan
   outputsBySource?: Record<FilePath, FilePath[]>
+  previousBuildState?: BuildState | null
+  ogFingerprints?: Record<FilePath, string>
 }
 
 export function trieFromAllFiles(allFiles: QuartzPluginData[]): FileTrieNode<BuildTimeTrieData> {
