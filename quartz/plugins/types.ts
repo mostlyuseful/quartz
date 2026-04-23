@@ -55,6 +55,12 @@ export type QuartzEmitterPluginInstance = {
     resources: StaticResources,
     changeEvents: ChangeEvent[],
   ) => Promise<FilePath[]> | AsyncGenerator<FilePath> | null
+  estimateEmittedFiles?: (
+    ctx: BuildCtx,
+    content: ProcessedContent[],
+    resources: StaticResources,
+    changeEvents: ChangeEvent[],
+  ) => number | Promise<number | null> | null
   /**
    * Returns the components (if any) that are used in rendering the page.
    * This helps Quartz optimize the page by only including necessary resources

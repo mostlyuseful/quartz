@@ -186,6 +186,27 @@ export const CustomOgImages: QuartzEmitterPlugin<Partial<SocialImageOptions>> = 
         }
       }
     },
+    estimateEmittedFiles(ctx, content, _resources, changeEvents) {
+      if (ctx.incremental && changeEvents.length === 0) {
+        return 0
+      }
+
+      if (changeEvents.length === 0) {
+        return content.filter(([_tree, vfile]) => vfile.data.frontmatter?.socialImage === undefined)
+          .length
+      }
+
+      let count = 0
+      for (const changeEvent of changeEvents) {
+        if (!changeEvent.file) continue
+        if (changeEvent.file.data.frontmatter?.socialImage !== undefined) continue
+        if (changeEvent.type === "add" || changeEvent.type === "change") {
+          count++
+        }
+      }
+
+      return count
+    },
     externalResources: (ctx) => {
       if (!ctx.cfg.configuration.baseUrl) {
         return {}

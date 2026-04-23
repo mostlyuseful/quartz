@@ -53,4 +53,23 @@ export const AliasRedirects: QuartzEmitterPlugin = () => ({
       }
     }
   },
+  estimateEmittedFiles(ctx, content, _resources, changeEvents) {
+    if (ctx.incremental && changeEvents.length === 0) {
+      return 0
+    }
+
+    if (changeEvents.length === 0) {
+      return content.reduce((count, [, file]) => count + (file.data.aliases?.length ?? 0), 0)
+    }
+
+    let count = 0
+    for (const changeEvent of changeEvents) {
+      if (!changeEvent.file) continue
+      if (changeEvent.type === "add" || changeEvent.type === "change") {
+        count += changeEvent.file.data.aliases?.length ?? 0
+      }
+    }
+
+    return count
+  },
 })

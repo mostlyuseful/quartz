@@ -28,16 +28,47 @@ export async function emitContent(
 
   let emittedFiles = 0
   const staticResources = getStaticResourcesFromPlugins(ctx)
-  const totalEmitters = cfg.plugins.emitters.length
-  let completedEmitters = 0
-  log.updateProgress(completedEmitters, totalEmitters)
+  const emitterRuns = await Promise.all(
+    cfg.plugins.emitters.map(async (emitter) => {
+      const shouldUsePartial =
+        ctx.incremental && incrementalEmitters.has(emitter.name) && emitter.partialEmit
+      const predictableTotal = emitter.estimateEmittedFiles
+        ? await emitter.estimateEmittedFiles(ctx, content, staticResources, changeEvents)
+        : null
+
+      return {
+        emitter,
+        shouldUsePartial,
+        predictableTotal: predictableTotal === null ? null : Math.max(0, predictableTotal),
+      }
+    }),
+  )
+
+  const predictableWorkTotal = emitterRuns.reduce(
+    (sum, run) => sum + (run.predictableTotal ?? 0),
+    0,
+  )
+  let predictableWorkDone = 0
+
+  if (predictableWorkTotal > 0) {
+    log.updateProgress(predictableWorkDone, predictableWorkTotal)
+  }
 
   await Promise.all(
-    cfg.plugins.emitters.map(async (emitter) => {
-      try {
-        const shouldUsePartial =
-          ctx.incremental && incrementalEmitters.has(emitter.name) && emitter.partialEmit
+    emitterRuns.map(async ({ emitter, shouldUsePartial, predictableTotal }) => {
+      let predictableSeen = 0
 
+      const markPredictable = (delta: number) => {
+        if (predictableTotal === null || predictableWorkTotal === 0) {
+          return
+        }
+
+        predictableSeen += delta
+        predictableWorkDone = Math.min(predictableWorkTotal, predictableWorkDone + delta)
+        log.updateProgress(predictableWorkDone, predictableWorkTotal)
+      }
+
+      try {
         const emitted = shouldUsePartial
           ? await emitter.partialEmit!(ctx, content, staticResources, changeEvents)
           : await emitter.emit(ctx, content, staticResources)
@@ -50,6 +81,7 @@ export async function emitContent(
           // Async generator case
           for await (const file of emitted) {
             emittedFiles++
+            markPredictable(1)
             if (ctx.argv.verbose) {
               console.log(`[emit:${emitter.name}] ${file}`)
             } else {
@@ -59,6 +91,7 @@ export async function emitContent(
         } else {
           // Array case
           emittedFiles += emitted.length
+          markPredictable(emitted.length)
           for (const file of emitted) {
             if (ctx.argv.verbose) {
               console.log(`[emit:${emitter.name}] ${file}`)
@@ -70,8 +103,9 @@ export async function emitContent(
       } catch (err) {
         trace(`Failed to emit from plugin \`${emitter.name}\``, err as Error)
       } finally {
-        completedEmitters++
-        log.updateProgress(completedEmitters, totalEmitters)
+        if (predictableTotal !== null && predictableSeen < predictableTotal) {
+          markPredictable(predictableTotal - predictableSeen)
+        }
       }
     }),
   )

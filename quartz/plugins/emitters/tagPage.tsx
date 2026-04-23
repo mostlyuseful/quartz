@@ -166,5 +166,43 @@ export const TagPage: QuartzEmitterPlugin<Partial<TagPageOptions>> = (userOpts) 
         }
       }
     },
+    estimateEmittedFiles(ctx, content, _resources, changeEvents) {
+      const allFiles = content.map((c) => c[1].data)
+      const cfg = ctx.cfg.configuration
+
+      if (ctx.incremental && changeEvents.length === 0) {
+        return 0
+      }
+
+      if (changeEvents.length === 0) {
+        const [tags] = computeTagInfo(allFiles, content, cfg.locale)
+        return tags.size
+      }
+
+      const affectedTags: Set<string> = new Set()
+      for (const changeEvent of changeEvents) {
+        if (!changeEvent.file) continue
+        const slug = changeEvent.file.data.slug!
+
+        if (slug.startsWith("tags/")) {
+          const tag = slug.slice("tags/".length)
+          affectedTags.add(tag)
+        }
+
+        const fileTags = changeEvent.file.data.frontmatter?.tags ?? []
+        fileTags.flatMap(getAllSegmentPrefixes).forEach((tag) => affectedTags.add(tag))
+        affectedTags.add("index")
+      }
+
+      const [_tags, tagDescriptions] = computeTagInfo(allFiles, content, cfg.locale)
+      let count = 0
+      for (const tag of affectedTags) {
+        if (tagDescriptions[tag]) {
+          count++
+        }
+      }
+
+      return count
+    },
   }
 }

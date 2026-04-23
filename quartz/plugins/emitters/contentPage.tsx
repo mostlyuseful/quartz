@@ -15,6 +15,10 @@ import { Node } from "unist"
 import { StaticResources } from "../../util/resources"
 import { QuartzPluginData } from "../vfile"
 
+function shouldEmitContentPage(slug: string): boolean {
+  return !slug.endsWith("/index") && !slug.startsWith("tags/")
+}
+
 async function processContent(
   ctx: BuildCtx,
   tree: Node,
@@ -85,7 +89,7 @@ export const ContentPage: QuartzEmitterPlugin<Partial<FullPageLayout>> = (userOp
         }
 
         // only process home page, non-tag pages, and non-index pages
-        if (slug.endsWith("/index") || slug.startsWith("tags/")) continue
+        if (!shouldEmitContentPage(slug)) continue
         yield processContent(ctx, tree, file.data, allFiles, opts, resources)
       }
 
@@ -113,10 +117,32 @@ export const ContentPage: QuartzEmitterPlugin<Partial<FullPageLayout>> = (userOp
       for (const [tree, file] of content) {
         const slug = file.data.slug!
         if (!changedSlugs.has(slug)) continue
-        if (slug.endsWith("/index") || slug.startsWith("tags/")) continue
+        if (!shouldEmitContentPage(slug)) continue
 
         yield processContent(ctx, tree, file.data, allFiles, opts, resources)
       }
+    },
+    estimateEmittedFiles(ctx, content, _resources, changeEvents) {
+      if (ctx.incremental && changeEvents.length === 0) {
+        return 0
+      }
+
+      if (changeEvents.length === 0) {
+        return content.filter(([, file]) => shouldEmitContentPage(file.data.slug!)).length
+      }
+
+      const changedSlugs = new Set<string>()
+      for (const event of changeEvents) {
+        if (!event.file) continue
+        if (event.type === "add" || event.type === "change") {
+          changedSlugs.add(event.file.data.slug!)
+        }
+      }
+
+      return content.filter(([, file]) => {
+        const slug = file.data.slug!
+        return changedSlugs.has(slug) && shouldEmitContentPage(slug)
+      }).length
     },
   }
 }

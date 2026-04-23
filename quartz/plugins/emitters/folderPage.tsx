@@ -166,5 +166,36 @@ export const FolderPage: QuartzEmitterPlugin<Partial<FolderPageOptions>> = (user
         yield* processFolderInfo(ctx, folderInfo, allFiles, opts, resources)
       }
     },
+    estimateEmittedFiles(ctx, content, _resources, changeEvents) {
+      const allFiles = content.map((c) => c[1].data)
+
+      if (ctx.incremental && changeEvents.length === 0) {
+        return 0
+      }
+
+      if (changeEvents.length === 0) {
+        return new Set(
+          allFiles.flatMap((data) => {
+            return data.slug
+              ? _getFolders(data.slug).filter(
+                  (folderName) => folderName !== "." && folderName !== "tags",
+                )
+              : []
+          }),
+        ).size
+      }
+
+      const affectedFolders: Set<SimpleSlug> = new Set()
+      for (const changeEvent of changeEvents) {
+        if (!changeEvent.file) continue
+        const slug = changeEvent.file.data.slug!
+        const folders = _getFolders(slug).filter(
+          (folderName) => folderName !== "." && folderName !== "tags",
+        )
+        folders.forEach((folder) => affectedFolders.add(folder))
+      }
+
+      return affectedFolders.size
+    },
   }
 }
