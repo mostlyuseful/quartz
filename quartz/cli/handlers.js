@@ -233,6 +233,11 @@ See the [documentation](https://quartz.jzhao.xyz) for how to get started.
  * @param {*} argv arguments for `build`
  */
 export async function handleBuild(argv) {
+  if (process.env.CI && !argv.fullRebuild && process.env.QUARTZ_INCREMENTAL_CI !== "1") {
+    argv.fullRebuild = true
+    console.log(styleText("yellow", "CI detected: defaulting to --full-rebuild"))
+  }
+
   if (argv.serve) {
     argv.watch = true
   }

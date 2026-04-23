@@ -50,6 +50,17 @@ type BuildData = {
   lastBuildMs: number
 }
 
+function getBuildMetadata() {
+  return {
+    configHash: hashObject(cfg.configuration),
+    pluginHash: hashObject({
+      transformers: cfg.plugins.transformers.map((plugin) => plugin.name),
+      filters: cfg.plugins.filters.map((plugin) => plugin.name),
+      emitters: cfg.plugins.emitters.map((plugin) => plugin.name),
+    }),
+  }
+}
+
 async function buildQuartz(argv: Argv, mut: Mutex, clientRefresh: () => void) {
   const ctx: BuildCtx = {
     buildId: randomIdNonSecure(),
@@ -78,7 +89,26 @@ async function buildQuartz(argv: Argv, mut: Mutex, clientRefresh: () => void) {
   const previousState = argv.fullRebuild ? null : await loadBuildState(output)
   ctx.previousBuildState = previousState
 
-  if (argv.fullRebuild) {
+  const currentMetadata = getBuildMetadata()
+  const metadataMismatch =
+    previousState !== null &&
+    (previousState.metadata.configHash !== currentMetadata.configHash ||
+      previousState.metadata.pluginHash !== currentMetadata.pluginHash)
+
+  const shouldFullRebuild = argv.fullRebuild || metadataMismatch
+  const activePreviousState = shouldFullRebuild ? null : previousState
+  ctx.incremental = !shouldFullRebuild
+
+  if (metadataMismatch) {
+    console.log(
+      styleText(
+        "yellow",
+        "Build config or plugin set changed since last run. Forcing full rebuild.",
+      ),
+    )
+  }
+
+  if (shouldFullRebuild) {
     perf.addEvent("clean")
     await rm(output, { recursive: true, force: true })
     console.log(`Cleaned output directory \`${output}\` in ${perf.timeSince("clean")}`)
@@ -102,20 +132,20 @@ async function buildQuartz(argv: Argv, mut: Mutex, clientRefresh: () => void) {
     SourceFingerprint
   >
 
-  const buildPlan = deriveBuildPlan(previousState, sourceFingerprints)
+  const buildPlan = deriveBuildPlan(activePreviousState, sourceFingerprints)
   ctx.buildPlan = buildPlan
 
-  if (!argv.fullRebuild && previousState) {
+  if (!shouldFullRebuild && activePreviousState) {
     const staleOutputs = new Set<FilePath>()
 
     for (const sourcePath of buildPlan.deleted) {
-      for (const outputPath of previousState.outputsBySource[sourcePath] ?? []) {
+      for (const outputPath of activePreviousState.outputsBySource[sourcePath] ?? []) {
         staleOutputs.add(outputPath)
       }
     }
 
     for (const sourcePath of buildPlan.changed) {
-      for (const outputPath of previousState.outputsBySource[sourcePath] ?? []) {
+      for (const outputPath of activePreviousState.outputsBySource[sourcePath] ?? []) {
         if (outputPath.endsWith("-og-image.webp")) {
           continue
         }
@@ -155,7 +185,7 @@ async function buildQuartz(argv: Argv, mut: Mutex, clientRefresh: () => void) {
   }
 
   ctx.outputsBySource = {}
-  ctx.ogFingerprints = { ...(previousState?.ogFingerprints ?? {}) }
+  ctx.ogFingerprints = { ...(activePreviousState?.ogFingerprints ?? {}) }
   for (const changedPath of [...buildPlan.added, ...buildPlan.changed]) {
     if (changedPath.endsWith(".md")) {
       ctx.outputsBySource[changedPath] = []
@@ -206,14 +236,9 @@ async function buildQuartz(argv: Argv, mut: Mutex, clientRefresh: () => void) {
   }
 
   await emitContent(ctx, filteredContent, changeEvents)
-  const configHash = hashObject(cfg.configuration)
-  const pluginHash = hashObject({
-    transformers: cfg.plugins.transformers.map((plugin) => plugin.name),
-    filters: cfg.plugins.filters.map((plugin) => plugin.name),
-    emitters: cfg.plugins.emitters.map((plugin) => plugin.name),
-  })
+  const { configHash, pluginHash } = currentMetadata
 
-  const outputsBySource = { ...(previousState?.outputsBySource ?? {}) }
+  const outputsBySource = { ...(activePreviousState?.outputsBySource ?? {}) }
   for (const sourcePath of buildPlan.deleted) {
     delete outputsBySource[sourcePath]
     delete ctx.ogFingerprints[sourcePath]
