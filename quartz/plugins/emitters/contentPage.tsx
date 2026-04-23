@@ -42,6 +42,7 @@ async function processContent(
     content,
     slug,
     ext: ".html",
+    source: fileData.relativePath,
   })
 }
 

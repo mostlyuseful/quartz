@@ -32,6 +32,7 @@ async function* processFile(ctx: BuildCtx, file: VFile) {
         `,
       slug: aliasTargetSlug,
       ext: ".html",
+      source: file.data.relativePath,
     })
   }
 }

@@ -120,13 +120,54 @@ async function buildQuartz(argv: Argv, mut: Mutex, clientRefresh: () => void) {
   const parsedFiles = await parseMarkdown(ctx, filePaths)
   const filteredContent = filterContent(ctx, parsedFiles)
 
-  await emitContent(ctx, filteredContent)
+  const filesByRelativePath = new Map<FilePath, ProcessedContent>()
+  for (const processed of filteredContent) {
+    const relativePath = processed[1].data.relativePath
+    if (relativePath) {
+      filesByRelativePath.set(relativePath, processed)
+    }
+  }
+
+  ctx.outputsBySource = {}
+  for (const changedPath of [...buildPlan.added, ...buildPlan.changed]) {
+    if (changedPath.endsWith(".md")) {
+      ctx.outputsBySource[changedPath] = []
+    }
+  }
+
+  const changeEvents: ChangeEvent[] = [
+    ...buildPlan.added.map((path) => ({
+      type: "add" as const,
+      path,
+      file: filesByRelativePath.get(path)?.[1],
+    })),
+    ...buildPlan.changed.map((path) => ({
+      type: "change" as const,
+      path,
+      file: filesByRelativePath.get(path)?.[1],
+    })),
+    ...buildPlan.deleted.map((path) => ({
+      type: "delete" as const,
+      path,
+    })),
+  ]
+
+  await emitContent(ctx, filteredContent, changeEvents)
   const configHash = hashObject(cfg.configuration)
   const pluginHash = hashObject({
     transformers: cfg.plugins.transformers.map((plugin) => plugin.name),
     filters: cfg.plugins.filters.map((plugin) => plugin.name),
     emitters: cfg.plugins.emitters.map((plugin) => plugin.name),
   })
+
+  const outputsBySource = { ...(previousState?.outputsBySource ?? {}) }
+  for (const sourcePath of buildPlan.deleted) {
+    delete outputsBySource[sourcePath]
+  }
+
+  for (const [sourcePath, emittedOutputs] of Object.entries(ctx.outputsBySource)) {
+    outputsBySource[sourcePath as FilePath] = emittedOutputs
+  }
 
   await saveBuildState(output, {
     version: BUILD_STATE_VERSION,
@@ -136,7 +177,7 @@ async function buildQuartz(argv: Argv, mut: Mutex, clientRefresh: () => void) {
       pluginHash,
     },
     sources: sourceFingerprints,
-    outputsBySource: previousState?.outputsBySource ?? {},
+    outputsBySource,
   })
 
   console.log(

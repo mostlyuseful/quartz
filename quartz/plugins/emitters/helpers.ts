@@ -9,12 +9,28 @@ type WriteOptions = {
   slug: FullSlug
   ext: `.${string}` | ""
   content: string | Buffer | Readable
+  source?: FilePath
 }
 
-export const write = async ({ ctx, slug, ext, content }: WriteOptions): Promise<FilePath> => {
+export const write = async ({
+  ctx,
+  slug,
+  ext,
+  content,
+  source,
+}: WriteOptions): Promise<FilePath> => {
   const pathToPage = joinSegments(ctx.argv.output, slug + ext) as FilePath
   const dir = path.dirname(pathToPage)
   await fs.promises.mkdir(dir, { recursive: true })
   await fs.promises.writeFile(pathToPage, content)
+
+  if (source) {
+    const knownOutputs = ctx.outputsBySource?.[source] ?? []
+    if (!knownOutputs.includes(pathToPage)) {
+      ctx.outputsBySource ??= {}
+      ctx.outputsBySource[source] = [...knownOutputs, pathToPage]
+    }
+  }
+
   return pathToPage
 }
