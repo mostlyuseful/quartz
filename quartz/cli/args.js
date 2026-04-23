@@ -105,4 +105,9 @@ export const BuildArgv = {
     number: true,
     describe: "how many threads to use to parse notes",
   },
+  fullRebuild: {
+    boolean: true,
+    default: false,
+    describe: "force a full rebuild by cleaning all output before emitting",
+  },
 }
