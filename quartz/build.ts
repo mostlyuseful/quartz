@@ -2,7 +2,7 @@ import sourceMapSupport from "source-map-support"
 sourceMapSupport.install(options)
 import path from "path"
 import { PerfTimer } from "./util/perf"
-import { rm, stat } from "fs/promises"
+import { access, constants, mkdir, rm, stat } from "fs/promises"
 import { GlobbyFilterFunction, isGitIgnored } from "globby"
 import { styleText } from "util"
 import { parseMarkdown } from "./processors/parse"
@@ -61,6 +61,18 @@ function getBuildMetadata() {
   }
 }
 
+async function ensureOutputDirectoryWritable(output: string) {
+  try {
+    await mkdir(output, { recursive: true })
+    await access(output, constants.W_OK)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    throw new Error(
+      `Output directory \`${output}\` is not writable. ${message}. If this path is a fresh Docker volume mounted for a non-root user, pre-create the mount point in the image or use a writable bind mount.`,
+    )
+  }
+}
+
 async function buildQuartz(argv: Argv, mut: Mutex, clientRefresh: () => void) {
   const ctx: BuildCtx = {
     buildId: randomIdNonSecure(),
@@ -74,6 +86,7 @@ async function buildQuartz(argv: Argv, mut: Mutex, clientRefresh: () => void) {
 
   const perf = new PerfTimer()
   const output = argv.output
+  await ensureOutputDirectoryWritable(output)
 
   const pluginCount = Object.values(cfg.plugins).flat().length
   const pluginNames = (key: "transformers" | "filters" | "emitters") =>
