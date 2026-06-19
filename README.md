@@ -24,6 +24,12 @@ docker run --init --rm \
 
 Replace `/LOCAL/PATH/TO/sources` with the absolute path to your notes directory. The named volume `quartz-cache` persists the output and build-state between runs so incremental rebuilds are fast.
 
+Note: after upgrading to an image that pre-creates `/quartz-cache` for non-root users, remove any previously created `quartz-cache` volume that was initialized with the old image if you still see permission errors:
+
+```bash
+docker volume rm quartz-cache
+```
+
 ---
 
 # Quartz v4
